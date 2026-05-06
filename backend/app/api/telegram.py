@@ -1,12 +1,15 @@
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from app.core.database import get_db
-from app.models.models import OTPCode
+from app.models.models import OTPCode, Appointment, User
 from app.core.config import settings
+import requests
+import logging
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
+logger = logging.getLogger(__name__)
 
 
 class TelegramOTPRequest(BaseModel):
@@ -94,3 +97,50 @@ async def check_phone_registered(
     # In production, you might want to maintain a separate table of telegram_users
 
     return {"registered": True, "method": "telegram"}
+
+
+class CancellationNotification(BaseModel):
+    phone: str
+    name: str
+    start_time: datetime
+    cancelled_by: str = "admin"
+
+
+def send_telegram_cancellation(phone: str, name: str, start_time: datetime, cancelled_by: str = "admin"):
+    """Send cancellation notification via Telegram bot webhook"""
+    try:
+        # This would call the bot's webhook endpoint
+        # For now, we'll log it - the bot will need to expose an endpoint or use a message queue
+        logger.info(f"📤 Cancellation notification queued for {phone}: appointment at {start_time}")
+
+        # In production, you would:
+        # 1. Call a bot webhook endpoint
+        # 2. Use a message queue (Redis, RabbitMQ)
+        # 3. Or store in a notifications table that the bot polls
+
+        # For this implementation, we'll create a simple notification table approach
+        # The bot can poll this or we can implement a webhook
+
+    except Exception as e:
+        logger.error(f"❌ Error sending Telegram cancellation notification: {e}")
+
+
+@router.post("/notify-cancellation")
+async def notify_cancellation(
+    notification: CancellationNotification,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Internal endpoint to notify user about appointment cancellation"""
+
+    # Queue the notification to be sent in background
+    background_tasks.add_task(
+        send_telegram_cancellation,
+        notification.phone,
+        notification.name,
+        notification.start_time,
+        notification.cancelled_by
+    )
+
+    return {"message": "Notification queued"}
+

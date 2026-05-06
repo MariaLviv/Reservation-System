@@ -11,10 +11,14 @@ Features:
 
 import os
 import logging
+import warnings
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple, List
 import random
 from contextlib import contextmanager
+
+# Suppress pkg_resources deprecation warning from APScheduler
+warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*')
 
 # Load environment variables from .env file
 try:
@@ -24,19 +28,25 @@ except ImportError:
     pass
 
 try:
-    from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
     from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
     import psycopg2
     from psycopg2 import pool
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
 except ImportError:
     import subprocess
-    subprocess.check_call(['pip', 'install', 'python-telegram-bot==13.15', 'psycopg2-binary', 'python-dotenv'])
+    subprocess.check_call(['pip', 'install', 'python-telegram-bot==13.15', 'psycopg2-binary', 'python-dotenv', 'APScheduler', 'pytz'])
     from dotenv import load_dotenv
     load_dotenv()
-    from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, Bot
     from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
     import psycopg2
     from psycopg2 import pool
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
 
 # Configure logging
 logging.basicConfig(
@@ -146,7 +156,7 @@ def init_database_tables() -> bool:
                 )
             """)
 
-            # Create otp_codes table
+            # Create otp_codes table (matches backend model)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS public.otp_codes (
                     id SERIAL PRIMARY KEY,
@@ -154,8 +164,7 @@ def init_database_tables() -> bool:
                     code VARCHAR(10) NOT NULL,
                     expires_at TIMESTAMP NOT NULL,
                     verified BOOLEAN DEFAULT FALSE,
-                    attempts INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW()
+                    attempts INTEGER DEFAULT 0
                 )
             """)
 
@@ -168,6 +177,19 @@ def init_database_tables() -> bool:
                     phone VARCHAR(20),
                     details TEXT,
                     created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+
+            # Create telegram_notifications table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS public.telegram_notifications (
+                    id SERIAL PRIMARY KEY,
+                    phone VARCHAR(20) NOT NULL,
+                    notification_type VARCHAR(50) NOT NULL,
+                    message_data JSONB,
+                    sent BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    sent_at TIMESTAMP
                 )
             """)
 
@@ -297,9 +319,11 @@ def check_rate_limit(phone: str) -> Tuple[bool, int]:
             cursor = conn.cursor()
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)
 
+            # Use id ordering since created_at doesn't exist
+            # Get the id from one hour ago by finding OTPs that would have expired by then
             cursor.execute("""
                 SELECT COUNT(*) FROM public.otp_codes
-                WHERE phone = %s AND created_at > %s
+                WHERE phone = %s AND expires_at > %s
             """, (phone, one_hour_ago))
 
             count = cursor.fetchone()[0]
@@ -345,11 +369,11 @@ def save_otp_to_database(phone: str, code: str) -> bool:
                 (phone,)
             )
 
-            # Insert new OTP with created_at timestamp
+            # Insert new OTP (without created_at as it doesn't exist in backend model)
             expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
             cursor.execute("""
-                INSERT INTO public.otp_codes (phone, code, expires_at, verified, attempts, created_at)
-                VALUES (%s, %s, %s, false, 0, NOW())
+                INSERT INTO public.otp_codes (phone, code, expires_at, verified, attempts)
+                VALUES (%s, %s, %s, false, 0)
             """, (phone, code, expires_at))
 
             conn.commit()
@@ -362,6 +386,20 @@ def save_otp_to_database(phone: str, code: str) -> bool:
         return False
 
 
+def escape_markdown(text: str) -> str:
+    """Escape special Markdown characters in text"""
+    logger.info(f"DEBUG escape_markdown: INPUT = {repr(text)}")
+    if not text:
+        logger.info("DEBUG escape_markdown: Empty text, returning empty")
+        return ""
+    # Escape special Markdown characters
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in escape_chars:
+        text = text.replace(char, '\\' + char)
+    logger.info(f"DEBUG escape_markdown: OUTPUT = {repr(text)}")
+    return text
+
+
 def get_user_appointments(phone: str) -> List[Dict]:
     """Get user's upcoming appointments"""
     try:
@@ -371,7 +409,7 @@ def get_user_appointments(phone: str) -> List[Dict]:
                 SELECT a.id, a.start_time, a.end_time, a.status, u.name
                 FROM public.appointments a
                 JOIN public.users u ON a.user_id = u.id
-                WHERE u.phone = %s AND a.start_time > NOW() AND a.status != 'cancelled'
+                WHERE u.phone = %s AND a.start_time > NOW() AND a.status::text != 'cancelled'
                 ORDER BY a.start_time ASC
                 LIMIT 10
             """, (phone,))
@@ -404,12 +442,12 @@ def cancel_appointment(appointment_id: int, phone: str) -> bool:
             # Verify appointment belongs to user and cancel it
             cursor.execute("""
                 UPDATE public.appointments a
-                SET status = 'cancelled'
+                SET status = 'cancelled'::appointmentstatus
                 FROM public.users u
                 WHERE a.id = %s
                   AND a.user_id = u.id
                   AND u.phone = %s
-                  AND a.status != 'cancelled'
+                  AND a.status::text != 'cancelled'
                 RETURNING a.id
             """, (appointment_id, phone))
 
@@ -438,7 +476,8 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("📱 Змінити номер", callback_data="reset"),
             InlineKeyboardButton("❓ Довідка", callback_data="help")
-        ]
+        ],
+        [InlineKeyboardButton("🏥 Контакти клініки", callback_data="contacts")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -620,12 +659,13 @@ def appointments_command(update: Update, context: CallbackContext) -> None:
     for i, apt in enumerate(appointments, 1):
         start_time = apt['start_time']
         status_emoji = "✅" if apt['status'] == 'booked' else "📝"
+        user_name = escape_markdown(apt['user_name'])
 
         message += (
             f"{status_emoji} *Запис #{i}*\n"
             f"📆 {start_time.strftime('%d.%m.%Y')}\n"
             f"🕐 {start_time.strftime('%H:%M')} - {apt['end_time'].strftime('%H:%M')}\n"
-            f"👤 {apt['user_name']}\n"
+            f"👤 {user_name}\n"
             f"🆔 ID: `{apt['id']}`\n"
             f"━━━━━━━━━━━━━━\n\n"
         )
@@ -1088,238 +1128,297 @@ def status_command(update: Update, context: CallbackContext) -> None:
 
 
 def error_handler(update: Update, context: CallbackContext) -> None:
-    """Handle errors"""
-    logger.error(f"❌ Update {update} caused error {context.error}")
+    """Handle errors with improved error messages and logging"""
+    error = context.error
+    error_type = type(error).__name__
 
+    # Log detailed error information
+    logger.error(
+        f"❌ Error: {error_type}: {error}\n"
+        f"Update: {update}\n"
+        f"Traceback:",
+        exc_info=error
+    )
+
+    # Log to database for analytics
+    if update and update.effective_user:
+        try:
+            phone = get_user_phone(update.effective_user.id)
+            log_bot_event(
+                'error',
+                update.effective_user.id,
+                phone,
+                f"{error_type}: {str(error)[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log error event: {e}")
+
+    # Send user-friendly error message
     if update and update.effective_message:
-        update.effective_message.reply_text(
-            "❌ *Виникла помилка*\n\n"
-            "Спробуйте ще раз або зверніться до адміністратора\n\n"
-            "Команди: /help",
-            parse_mode='Markdown'
-        )
+        try:
+            # Customize message based on error type
+            if "timeout" in str(error).lower() or "connection" in str(error).lower():
+                message = (
+                    "⏱ *Час очікування сплив*\n\n"
+                    "Схоже, виникли проблеми з підключенням.\n"
+                    "Спробуйте ще раз через кілька секунд.\n\n"
+                    "Команди: /help"
+                )
+            elif "database" in str(error).lower():
+                message = (
+                    "❌ *Помилка бази даних*\n\n"
+                    "Спробуйте ще раз через хвилину.\n"
+                    "Якщо проблема повторюється, зверніться до адміністратора.\n\n"
+                    "Команди: /help"
+                )
+            else:
+                message = (
+                    "❌ *Виникла помилка*\n\n"
+                    "Спробуйте ще раз або зверніться до адміністратора.\n\n"
+                    "Команди: /help"
+                )
+
+            update.effective_message.reply_text(message, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to send error message to user: {e}")
 
 
 def button_callback(update: Update, context: CallbackContext) -> None:
-    """Handle inline button callbacks"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
+    """Handle inline button callbacks with comprehensive error handling"""
+    try:
+        query = update.callback_query
+        user_id = query.from_user.id
+        data = query.data
 
-    # Answer callback query to remove loading state
-    query.answer()
+        # Answer callback query to remove loading state
+        query.answer()
 
-    logger.info(f"🔘 Button pressed: {data} by user {user_id}")
+        logger.info(f"🔘 Button pressed: {data} by user {user_id}")
 
-    # Route to appropriate handler based on callback data
-    if data == "get_otp":
-        # Simulate text message to trigger OTP generation
-        phone = get_user_phone(user_id)
-        if not phone:
-            query.edit_message_text(
-                "❌ Спочатку поділіться номером телефону\n"
-                "Використайте /start"
-            )
-            return
+        # Route to appropriate handler based on callback data
+        if data == "get_otp":
+            # Simulate text message to trigger OTP generation
+            phone = get_user_phone(user_id)
+            if not phone:
+                query.edit_message_text(
+                    "❌ Спочатку поділіться номером телефону\n"
+                    "Використайте /start"
+                )
+                return
 
-        # Check rate limit
-        is_allowed, count = check_rate_limit(phone)
-        if not is_allowed:
-            query.edit_message_text(
-                f"🚫 *Перевищено ліміт запитів*\n\n"
-                f"Ви вже отримали {count} кодів за останню годину.\n"
-                f"Максимум: {MAX_OTP_PER_HOUR} кодів/годину\n\n"
-                f"⏰ Зачекайте до наступної години",
-                parse_mode='Markdown'
-            )
-            log_bot_event('rate_limit_exceeded', user_id, phone, f"count={count}")
-            return
+            # Check rate limit
+            is_allowed, count = check_rate_limit(phone)
+            if not is_allowed:
+                query.edit_message_text(
+                    f"🚫 *Перевищено ліміт запитів*\n\n"
+                    f"Ви вже отримали {count} кодів за останню годину.\n"
+                    f"Максимум: {MAX_OTP_PER_HOUR} кодів/годину\n\n"
+                    f"⏰ Зачекайте до наступної години",
+                    parse_mode='Markdown'
+                )
+                log_bot_event('rate_limit_exceeded', user_id, phone, f"count={count}")
+                return
 
-        # Check for active OTP
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT code, expires_at FROM public.otp_codes
-                    WHERE phone = %s AND verified = false AND expires_at > %s
-                    ORDER BY id DESC LIMIT 1
-                """, (phone, datetime.utcnow()))
+            # Check for active OTP
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT code, expires_at FROM public.otp_codes
+                        WHERE phone = %s AND verified = false AND expires_at > %s
+                        ORDER BY id DESC LIMIT 1
+                    """, (phone, datetime.utcnow()))
 
-                result = cursor.fetchone()
-                cursor.close()
+                    result = cursor.fetchone()
+                    cursor.close()
 
-                if result:
-                    code, expires_at = result
-                    remaining = (expires_at - datetime.utcnow()).total_seconds()
-                    minutes = int(remaining // 60)
-                    seconds = int(remaining % 60)
+                    if result:
+                        code, expires_at = result
+                        remaining = (expires_at - datetime.utcnow()).total_seconds()
+                        minutes = int(remaining // 60)
+                        seconds = int(remaining % 60)
+
+                        reply_markup = get_main_menu_keyboard()
+                        query.edit_message_text(
+                            f"⏳ *У вас вже є активний код!*\n\n"
+                            f"🔐 Код: `{code}`\n"
+                            f"⏱ Дійсний ще *{minutes}хв {seconds}сек*\n\n"
+                            f"💡 Зачекайте, поки код не закінчиться",
+                            parse_mode='Markdown',
+                            reply_markup=reply_markup
+                        )
+                        return
+            except Exception as e:
+                logger.error(f"❌ Error checking existing OTP: {e}")
+                # Continue to generate new code
+
+            # Generate new OTP
+            code = ''.join([str(random.randint(0, 9)) for _ in range(OTP_LENGTH)])
+            saved = save_otp_to_database(phone, code)
+
+            reply_markup = get_main_menu_keyboard()
+
+            if saved:
+                query.edit_message_text(
+                    f"🔐 *Ваш код підтвердження:*\n\n"
+                    f"```\n"
+                    f"  {code}\n"
+                    f"```\n\n"
+                    f"📝 Введіть цей код на сайті\n"
+                    f"⏱ Дійсний {OTP_EXPIRY_MINUTES} хвилин",
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+                log_bot_event('otp_generated', user_id, phone, f"code={code}")
+            else:
+                query.edit_message_text(
+                    f"❌ *Помилка з'єднання з базою даних*\n\n"
+                    f"Спробуйте ще раз через хвилину",
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+
+        elif data == "appointments":
+            phone = get_user_phone(user_id)
+            if not phone:
+                query.edit_message_text("❌ Спочатку поділіться номером телефону")
+                return
+
+            appointments = get_user_appointments(phone)
+            reply_markup = get_main_menu_keyboard()
+
+            if not appointments:
+                query.edit_message_text(
+                    "📅 *Мої записи*\n\n"
+                    "У вас немає майбутніх записів.\n\n"
+                    "💡 Запишіться на сайті!",
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+                return
+
+            message = "📅 *Мої записи:*\n\n"
+            for i, apt in enumerate(appointments[:5], 1):  # Show max 5
+                start_time = apt['start_time']
+                status_emoji = "✅" if apt['status'] == 'booked' else "📝"
+                user_name = escape_markdown(apt['user_name'])
+                message += (
+                    f"{status_emoji} *Запис #{i}*\n"
+                    f"📆 {start_time.strftime('%d.%m.%Y')}\n"
+                    f"🕐 {start_time.strftime('%H:%M')} - {apt['end_time'].strftime('%H:%M')}\n"
+                    f"👤 {user_name}\n"
+                    f"━━━━━━━━━━━━━━\n\n"
+                )
+
+            message += "Для скасування: /cancel ID_запису"
+
+            # Add cancel buttons for each appointment
+            cancel_buttons = []
+            for apt in appointments[:5]:
+                cancel_buttons.append([
+                    InlineKeyboardButton(
+                        f"❌ Скасувати #{apt['id']}",
+                        callback_data=f"cancel_{apt['id']}"
+                    )
+                ])
+            cancel_buttons.append([InlineKeyboardButton("🔙 Головне меню", callback_data="main_menu")])
+            reply_markup = InlineKeyboardMarkup(cancel_buttons)
+
+            # DEBUG: Log the exact message being sent
+            logger.info(f"DEBUG: Message length: {len(message)} bytes")
+            logger.info(f"DEBUG: Message content:\n{message}")
+            logger.info(f"DEBUG: Message repr: {repr(message)}")
+            backslash = '\\'
+            for i, char in enumerate(message):
+                if char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+                    has_escape = backslash in message[max(0,i-1):i+1]
+                    logger.info(f"DEBUG: Special char at position {i}: '{char}' (escaped: {has_escape})")
+            if len(message) >= 192:
+                logger.info(f"DEBUG: Char at byte 192: '{message[192]}' (ord={ord(message[192])})")
+                logger.info(f"DEBUG: Context 180-200: {message[180:200]}")
+
+            query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
+
+        elif data.startswith("cancel_"):
+            appointment_id = int(data.split("_")[1])
+            phone = get_user_phone(user_id)
+
+            if cancel_appointment(appointment_id, phone):
+                reply_markup = get_main_menu_keyboard()
+                query.edit_message_text(
+                    f"✅ Запис #{appointment_id} успішно скасовано!\n\n"
+                    f"💡 Можете записатись на інший час на сайті",
+                    reply_markup=reply_markup
+                )
+                log_bot_event('appointment_cancelled', user_id, phone, f"id={appointment_id}")
+            else:
+                reply_markup = get_main_menu_keyboard()
+                query.edit_message_text(
+                    f"❌ Не вдалось скасувати запис #{appointment_id}",
+                    reply_markup=reply_markup
+                )
+
+        elif data == "status":
+            phone = get_user_phone(user_id)
+            if not phone:
+                query.edit_message_text("❌ Спочатку поділіться номером телефону")
+                return
+
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT code, expires_at FROM public.otp_codes
+                        WHERE phone = %s AND verified = false AND expires_at > %s
+                        ORDER BY id DESC LIMIT 1
+                    """, (phone, datetime.utcnow()))
+
+                    result = cursor.fetchone()
+                    cursor.close()
 
                     reply_markup = get_main_menu_keyboard()
-                    query.edit_message_text(
-                        f"⏳ *У вас вже є активний код!*\n\n"
-                        f"🔐 Код: `{code}`\n"
-                        f"⏱ Дійсний ще *{minutes}хв {seconds}сек*\n\n"
-                        f"💡 Зачекайте, поки код не закінчиться",
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-                    return
-        except Exception as e:
-            logger.error(f"❌ Error checking existing OTP: {e}")
 
-        # Generate new OTP
-        code = ''.join([str(random.randint(0, 9)) for _ in range(OTP_LENGTH)])
-        saved = save_otp_to_database(phone, code)
+                    if result:
+                        code, expires_at = result
+                        remaining = (expires_at - datetime.utcnow()).total_seconds()
+                        minutes = int(remaining // 60)
+                        seconds = int(remaining % 60)
 
-        reply_markup = get_main_menu_keyboard()
+                        query.edit_message_text(
+                            f"📱 *Статус*\n\n"
+                            f"📞 Номер: {phone}\n"
+                            f"🔐 Код: `{code}`\n"
+                            f"⏱ Ще *{minutes}хв {seconds}сек*",
+                            parse_mode='Markdown',
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        query.edit_message_text(
+                            f"📱 *Статус*\n\n"
+                            f"📞 Номер: {phone}\n"
+                            f"✅ Готовий до отримання нового коду",
+                            parse_mode='Markdown',
+                            reply_markup=reply_markup
+                        )
+            except Exception as e:
+                logger.error(f"❌ Status error: {e}")
+                query.edit_message_text("❌ Помилка перевірки статусу")
 
-        if saved:
-            query.edit_message_text(
-                f"🔐 *Ваш код підтвердження:*\n\n"
-                f"```\n"
-                f"  {code}\n"
-                f"```\n\n"
-                f"📝 Введіть цей код на сайті\n"
-                f"⏱ Дійсний {OTP_EXPIRY_MINUTES} хвилин",
-                parse_mode='Markdown',
+        elif data == "reset":
+            button = KeyboardButton("📱 Поділитися номером", request_contact=True)
+            keyboard = [[button]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+
+            # Send new message instead of editing (can't edit to show contact button)
+            context.bot.send_message(
+                chat_id=user_id,
+                text="🔄 Зміна номера телефону\n\nНатисніть кнопку для вибору нового номера 👇",
                 reply_markup=reply_markup
             )
-            log_bot_event('otp_generated', user_id, phone, f"code={code}")
-        else:
-            query.edit_message_text(
-                f"❌ *Помилка з'єднання з базою даних*\n\n"
-                f"Спробуйте ще раз через хвилину",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+            query.message.delete()
 
-    elif data == "appointments":
-        phone = get_user_phone(user_id)
-        if not phone:
-            query.edit_message_text("❌ Спочатку поділіться номером телефону")
-            return
-
-        appointments = get_user_appointments(phone)
-        reply_markup = get_main_menu_keyboard()
-
-        if not appointments:
-            query.edit_message_text(
-                "📅 *Мої записи*\n\n"
-                "У вас немає майбутніх записів.\n\n"
-                "💡 Запишіться на сайті!",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
-            return
-
-        message = "📅 *Мої записи:*\n\n"
-        for i, apt in enumerate(appointments[:5], 1):  # Show max 5
-            start_time = apt['start_time']
-            status_emoji = "✅" if apt['status'] == 'booked' else "📝"
-            message += (
-                f"{status_emoji} *Запис #{i}*\n"
-                f"📆 {start_time.strftime('%d.%m.%Y')}\n"
-                f"🕐 {start_time.strftime('%H:%M')} - {apt['end_time'].strftime('%H:%M')}\n"
-                f"👤 {apt['user_name']}\n"
-                f"━━━━━━━━━━━━━━\n\n"
-            )
-
-        message += "Для скасування: /cancel ID_запису"
-
-        # Add cancel buttons for each appointment
-        cancel_buttons = []
-        for apt in appointments[:5]:
-            cancel_buttons.append([
-                InlineKeyboardButton(
-                    f"❌ Скасувати #{apt['id']}",
-                    callback_data=f"cancel_{apt['id']}"
-                )
-            ])
-        cancel_buttons.append([InlineKeyboardButton("🔙 Головне меню", callback_data="main_menu")])
-        reply_markup = InlineKeyboardMarkup(cancel_buttons)
-
-        query.edit_message_text(message, parse_mode='Markdown', reply_markup=reply_markup)
-
-    elif data.startswith("cancel_"):
-        appointment_id = int(data.split("_")[1])
-        phone = get_user_phone(user_id)
-
-        if cancel_appointment(appointment_id, phone):
-            reply_markup = get_main_menu_keyboard()
-            query.edit_message_text(
-                f"✅ Запис #{appointment_id} успішно скасовано!\n\n"
-                f"💡 Можете записатись на інший час на сайті",
-                reply_markup=reply_markup
-            )
-            log_bot_event('appointment_cancelled', user_id, phone, f"id={appointment_id}")
-        else:
-            reply_markup = get_main_menu_keyboard()
-            query.edit_message_text(
-                f"❌ Не вдалось скасувати запис #{appointment_id}",
-                reply_markup=reply_markup
-            )
-
-    elif data == "status":
-        phone = get_user_phone(user_id)
-        if not phone:
-            query.edit_message_text("❌ Спочатку поділіться номером телефону")
-            return
-
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT code, expires_at FROM public.otp_codes
-                    WHERE phone = %s AND verified = false AND expires_at > %s
-                    ORDER BY id DESC LIMIT 1
-                """, (phone, datetime.utcnow()))
-
-                result = cursor.fetchone()
-                cursor.close()
-
-                reply_markup = get_main_menu_keyboard()
-
-                if result:
-                    code, expires_at = result
-                    remaining = (expires_at - datetime.utcnow()).total_seconds()
-                    minutes = int(remaining // 60)
-                    seconds = int(remaining % 60)
-
-                    query.edit_message_text(
-                        f"📱 *Статус*\n\n"
-                        f"📞 Номер: {phone}\n"
-                        f"🔐 Код: `{code}`\n"
-                        f"⏱ Ще *{minutes}хв {seconds}сек*",
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-                else:
-                    query.edit_message_text(
-                        f"📱 *Статус*\n\n"
-                        f"📞 Номер: {phone}\n"
-                        f"✅ Готовий до отримання нового коду",
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-        except Exception as e:
-            logger.error(f"❌ Status error: {e}")
-            query.edit_message_text("❌ Помилка перевірки статусу")
-
-    elif data == "reset":
-        button = KeyboardButton("📱 Поділитися номером", request_contact=True)
-        keyboard = [[button]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-
-        # Send new message instead of editing (can't edit to show contact button)
-        context.bot.send_message(
-            chat_id=user_id,
-            text="🔄 Зміна номера телефону\n\nНатисніть кнопку для вибору нового номера 👇",
-            reply_markup=reply_markup
-        )
-        query.message.delete()
-
-    elif data == "help":
-        help_text = """
+        elif data == "help":
+            help_text = """
 📖 *Довідка*
 
 *Як користуватись:*
@@ -1335,17 +1434,305 @@ def button_callback(update: Update, context: CallbackContext) -> None:
 
 ❓ Проблеми? Напишіть адміністратору
 """
-        reply_markup = get_main_menu_keyboard()
-        query.edit_message_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
+            reply_markup = get_main_menu_keyboard()
+            query.edit_message_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
 
-    elif data == "main_menu":
-        phone = get_user_phone(user_id)
-        reply_markup = get_main_menu_keyboard()
-        query.edit_message_text(
-            f"📱 Ваш номер: {phone}\n\n"
-            f"Оберіть дію з меню 👇",
-            reply_markup=reply_markup
+        elif data == "contacts":
+            contacts_text = """
+🏥 *Контакти клініки*
+
+📍 *Адреса:*
+вул. Медична, 123
+Київ, 01001
+
+📞 *Телефон:*
++380 50 123 4567
+
+⏰ *Години роботи:*
+Пн-Пт: 09:00 - 18:00
+Сб: 10:00 - 15:00
+Нд: вихідний
+
+📧 *Email:*
+info@clinic.com
+
+💡 *Для запису:*
+Використайте цей бот для отримання коду підтвердження та записуйтесь через веб-сайт клініки
+"""
+            reply_markup = get_main_menu_keyboard()
+            query.edit_message_text(contacts_text, parse_mode='Markdown', reply_markup=reply_markup)
+
+        elif data == "main_menu":
+            phone = get_user_phone(user_id)
+            reply_markup = get_main_menu_keyboard()
+            query.edit_message_text(
+                f"📱 Ваш номер: {phone}\n\n"
+                f"Оберіть дію з меню 👇",
+                reply_markup=reply_markup
+            )
+
+    except Exception as e:
+        # Catch-all for any unhandled errors in button callback
+        logger.error(f"❌ Unhandled error in button_callback: {e}", exc_info=True)
+        try:
+            query.answer("❌ Виникла помилка. Спробуйте ще раз.")
+            query.edit_message_text(
+                "❌ *Виникла помилка*\n\n"
+                "Спробуйте ще раз або використайте /help",
+                parse_mode='Markdown'
+            )
+        except Exception as notify_error:
+            logger.error(f"Failed to notify user about error: {notify_error}")
+
+
+def get_appointments_for_tomorrow() -> List[Dict]:
+    """Get all appointments scheduled for tomorrow"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Calculate tomorrow's date range
+            tomorrow = datetime.utcnow().date() + timedelta(days=1)
+            tomorrow_start = datetime.combine(tomorrow, datetime.min.time())
+            tomorrow_end = datetime.combine(tomorrow, datetime.max.time())
+
+            cursor.execute("""
+                SELECT
+                    a.id,
+                    a.start_time,
+                    a.end_time,
+                    u.phone,
+                    u.name,
+                    u.email,
+                    a.notes
+                FROM public.appointments a
+                JOIN public.users u ON a.user_id = u.id
+                WHERE a.start_time >= %s
+                    AND a.start_time <= %s
+                    AND a.status = 'booked'
+                ORDER BY a.start_time
+            """, (tomorrow_start, tomorrow_end))
+
+            appointments = []
+            for row in cursor.fetchall():
+                appointments.append({
+                    'id': row[0],
+                    'start_time': row[1],
+                    'end_time': row[2],
+                    'phone': row[3],
+                    'name': row[4],
+                    'email': row[5],
+                    'notes': row[6]
+                })
+
+            cursor.close()
+            logger.info(f"📅 Found {len(appointments)} appointments for tomorrow")
+            return appointments
+
+    except Exception as e:
+        logger.error(f"❌ Error fetching tomorrow's appointments: {e}")
+        return []
+
+
+def send_appointment_reminder(bot: Bot, phone: str, name: str, start_time: datetime, end_time: datetime, notes: Optional[str] = None) -> bool:
+    """Send appointment reminder to user via Telegram"""
+    try:
+        # Get telegram_id for this phone number
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT telegram_id FROM public.telegram_users
+                WHERE phone = %s
+                ORDER BY last_active DESC
+                LIMIT 1
+            """, (phone,))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if not result:
+                logger.info(f"⚠️ No Telegram account linked for {phone}")
+                return False
+
+            telegram_id = result[0]
+
+        # Format reminder message
+        start_str = start_time.strftime('%d.%m.%Y о %H:%M')
+        end_str = end_time.strftime('%H:%M')
+        safe_name = escape_markdown(name)
+        safe_notes = escape_markdown(notes) if notes else None
+
+        message = (
+            f"🔔 *Нагадування про запис*\n\n"
+            f"👤 {safe_name}\n"
+            f"📅 Завтра, {start_str}\n"
+            f"⏰ Тривалість: до {end_str}\n"
         )
+
+        if safe_notes:
+            message += f"\n📝 Примітки: {safe_notes}\n"
+
+        message += (
+            f"\n💡 Якщо ви не зможете прийти, будь ласка, скасуйте запис заздалегідь\n"
+            f"📱 Використайте команду /appointments для перегляду записів"
+        )
+
+        # Send message
+        bot.send_message(
+            chat_id=telegram_id,
+            text=message,
+            parse_mode='Markdown'
+        )
+
+        logger.info(f"✅ Reminder sent to {phone} (telegram_id={telegram_id})")
+        log_bot_event('reminder_sent', telegram_id, phone, f"appointment at {start_time}")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Error sending reminder to {phone}: {e}")
+        return False
+
+
+def send_cancellation_notification(bot: Bot, phone: str, name: str, start_time: datetime, cancelled_by: str = 'admin') -> bool:
+    """Send cancellation notification to user via Telegram"""
+    try:
+        # Get telegram_id for this phone number
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT telegram_id FROM public.telegram_users
+                WHERE phone = %s
+                ORDER BY last_active DESC
+                LIMIT 1
+            """, (phone,))
+
+            result = cursor.fetchone()
+            cursor.close()
+
+            if not result:
+                logger.info(f"⚠️ No Telegram account linked for {phone}")
+                return False
+
+            telegram_id = result[0]
+
+        # Format cancellation message
+        start_str = start_time.strftime('%d.%m.%Y о %H:%M')
+        safe_name = escape_markdown(name)
+
+        message = (
+            f"❌ *Запис скасовано*\n\n"
+            f"👤 {safe_name}\n"
+            f"📅 {start_str}\n\n"
+        )
+
+        if cancelled_by == 'admin':
+            message += (
+                f"⚠️ Ваш запис було скасовано лікарем\n"
+                f"💡 Будь ласка, зателефонуйте в клініку для з'ясування деталей\n\n"
+            )
+        else:
+            message += f"✅ Ваш запис успішно скасовано\n\n"
+
+        message += f"📱 Використайте /start для створення нового запису"
+
+        # Send message
+        bot.send_message(
+            chat_id=telegram_id,
+            text=message,
+            parse_mode='Markdown'
+        )
+
+        logger.info(f"✅ Cancellation notification sent to {phone} (telegram_id={telegram_id})")
+        log_bot_event('cancellation_notification', telegram_id, phone, f"cancelled_by={cancelled_by}")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Error sending cancellation notification to {phone}: {e}")
+        return False
+
+
+def daily_reminder_job(bot: Bot):
+    """Daily job to send appointment reminders at 12:00"""
+    try:
+        logger.info("⏰ Running daily reminder job...")
+        appointments = get_appointments_for_tomorrow()
+
+        success_count = 0
+        fail_count = 0
+
+        for appt in appointments:
+            if send_appointment_reminder(
+                bot=bot,
+                phone=appt['phone'],
+                name=appt['name'],
+                start_time=appt['start_time'],
+                end_time=appt['end_time'],
+                notes=appt['notes']
+            ):
+                success_count += 1
+            else:
+                fail_count += 1
+
+        logger.info(f"✅ Reminder job completed: {success_count} sent, {fail_count} failed")
+
+    except Exception as e:
+        logger.error(f"❌ Error in daily reminder job: {e}")
+
+
+def process_pending_notifications(bot: Bot):
+    """Process pending Telegram notifications from the database"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get pending notifications
+            cursor.execute("""
+                SELECT id, phone, notification_type, message_data
+                FROM public.telegram_notifications
+                WHERE sent = false
+                ORDER BY created_at
+                LIMIT 50
+            """)
+
+            notifications = cursor.fetchall()
+
+            if not notifications:
+                return
+
+            logger.info(f"📬 Processing {len(notifications)} pending notifications")
+
+            for notif_id, phone, notif_type, message_data in notifications:
+                try:
+                    if notif_type == 'cancellation':
+                        # Send cancellation notification
+                        success = send_cancellation_notification(
+                            bot=bot,
+                            phone=phone,
+                            name=message_data.get('name', 'Користувач'),
+                            start_time=datetime.fromisoformat(message_data['start_time']),
+                            cancelled_by=message_data.get('cancelled_by', 'admin')
+                        )
+
+                        if success:
+                            # Mark as sent
+                            cursor.execute("""
+                                UPDATE public.telegram_notifications
+                                SET sent = true, sent_at = NOW()
+                                WHERE id = %s
+                            """, (notif_id,))
+                            conn.commit()
+                            logger.info(f"✅ Notification {notif_id} sent successfully")
+                        else:
+                            logger.warning(f"⚠️ Failed to send notification {notif_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Error processing notification {notif_id}: {e}")
+                    continue
+
+            cursor.close()
+
+    except Exception as e:
+        logger.error(f"❌ Error in notification processor: {e}")
 
 
 def main() -> None:
@@ -1399,6 +1786,30 @@ def main() -> None:
 
     updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
+
+    # Initialize scheduler for daily reminders at 12:00
+    # Use UTC timezone explicitly to avoid zoneinfo compatibility issues
+    utc = pytz.UTC
+    scheduler = BackgroundScheduler(timezone=utc)
+    scheduler.add_job(
+        daily_reminder_job,
+        trigger=CronTrigger(hour=12, minute=0, timezone=utc),  # Every day at 12:00 UTC
+        args=[updater.bot],
+        id='daily_reminder',
+        name='Daily Appointment Reminders',
+        replace_existing=True
+    )
+    # Process pending notifications every 2 minutes
+    scheduler.add_job(
+        process_pending_notifications,
+        trigger=CronTrigger(minute='*/2', timezone=utc),  # Every 2 minutes
+        args=[updater.bot],
+        id='notification_processor',
+        name='Notification Processor',
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info("⏰ Scheduler started - reminders daily at 12:00 UTC, notifications every 2 min")
 
     # Command handlers
     dp.add_handler(CommandHandler("start", start_command))

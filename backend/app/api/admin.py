@@ -30,6 +30,12 @@ SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
 
 
+@router.get("/phone")
+def get_admin_phone():
+    """Get admin phone number for login form"""
+    return {"phone": settings.ADMIN_PHONE}
+
+
 def create_session_token(phone: str) -> str:
     """Create session token for admin"""
     expires = datetime.utcnow() + timedelta(hours=settings.SESSION_EXPIRY_HOURS)
@@ -259,8 +265,27 @@ def admin_cancel_appointment(
     if not appointment:
         raise HTTPException(status_code=404, detail="Запис не знайдено")
 
+    # Get user details for notification
+    from app.models.models import TelegramNotification
+    user = appointment.user
+
     appointment.status = "cancelled"
     appointment.cancelled_by = "admin"
+
+    # Create Telegram notification
+    notification = TelegramNotification(
+        phone=user.phone,
+        notification_type="cancellation",
+        message_data={
+            "name": user.name,
+            "start_time": appointment.start_time.isoformat(),
+            "end_time": appointment.end_time.isoformat(),
+            "cancelled_by": "admin",
+            "appointment_id": appointment_id
+        },
+        sent=False
+    )
+    db.add(notification)
     db.commit()
 
     # Log the cancellation

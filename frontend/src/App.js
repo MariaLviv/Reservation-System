@@ -78,9 +78,12 @@ function App() {
     <ErrorBoundary>
       <div className="App">
         <nav className="main-nav">
-          <h1 className="app-title">
-            {currentPage === 'admin' ? 'Адмін-панель' : 'Запис до лікаря'}
-          </h1>
+          <div className="app-header">
+            <img src="/doctor.png" alt="Олег Гнідан" className="doctor-photo" />
+            <h1 className="app-title">
+              {currentPage === 'admin' ? 'Адмін-панель' : 'Запис до лікаря Олега Гнідана'}
+            </h1>
+          </div>
           <div className="nav-buttons">
             <button
               className={currentPage === 'booking' ? 'active' : ''}

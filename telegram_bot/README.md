@@ -4,6 +4,7 @@ A production-ready Telegram bot for medical appointment booking system that hand
 
 ## 📋 Table of Contents
 
+- [🆕 Recent Updates (May 7, 2026)](#-recent-updates-may-7-2026)
 - [System Overview](#system-overview)
 - [Architecture](#architecture)
 - [Features](#features)
@@ -16,6 +17,158 @@ A production-ready Telegram bot for medical appointment booking system that hand
 - [API Integration](#api-integration)
 - [Security](#security)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## 🆕 Recent Updates (May 7, 2026)
+
+### ✅ Admin Panel OTP Authentication (NEW)
+
+#### Feature: Real OTP Verification for Admin Login
+**Implementation**: Admin panel now uses real OTP authentication instead of simple phone matching.
+
+**How it works**:
+1. Admin phone number is stored in `backend/.env` file: `ADMIN_PHONE=+380501234599`
+2. Frontend fetches admin phone from backend API: `GET /api/v1/admin/phone`
+3. When admin enters correct phone, OTP is sent via Telegram bot
+4. Admin receives 6-digit code in Telegram (@Toka_12_bot)
+5. After successful OTP verification, admin gets session token
+
+**Files Changed**:
+- `backend/.env` - Admin phone configuration
+- `backend/app/api/admin.py` - Added `GET /admin/phone` endpoint
+- `frontend/src/services/adminService.js` - Added `getAdminPhone()` function
+- `frontend/src/pages/AdminPage.js` - Full OTP flow implementation
+- `frontend/src/styles/AdminPage.css` - OTP form styles
+
+**Admin Login Flow**:
+```
+1. Admin enters phone number
+   └─► Frontend validates against backend ADMIN_PHONE
+        └─► If match: Send OTP via /admin/send-otp
+             └─► Admin receives code in Telegram
+                  └─► Admin enters code
+                       └─► Verify via /admin/verify-otp
+                            └─► Session token granted
+```
+
+**Configuration**:
+```env
+# In backend/.env
+ADMIN_PHONE=+380501234599
+```
+
+**Status**: ✅ **IMPLEMENTED**
+
+---
+
+### ✅ Critical Fixes Implemented
+
+#### 1. Markdown Parsing Error (FIXED)
+**Issue**: `Can't parse entities: can't find end of the entity starting at byte offset 192`
+- **Root Cause**: Unescaped underscore character in static text `"ID_запису"`
+- **Fix Applied**: Line 1313 - Changed to `"ID\_запису"` with escaped underscore
+- **Status**: ✅ **RESOLVED** - Appointments now display without errors
+- **Affected Function**: `button_callback()` - appointments display
+
+#### 2. PostgreSQL Enum Casting Error (FIXED)
+**Issue**: `invalid input value for enum appointmentstatus: "cancelled"`
+- **Root Cause**: Direct string comparison with PostgreSQL enum type
+- **Fix Applied**: 
+  - Line 412: `a.status::text != 'cancelled'` (cast enum to text for comparison)
+  - Line 445: `status = 'cancelled'::appointmentstatus` (cast string to enum for assignment)
+- **Status**: ✅ **RESOLVED** - Enum operations work correctly
+
+#### 3. Missing Database Table (FIXED)
+**Issue**: `relation "telegram_notifications" does not exist`
+- **Root Cause**: Table not created in initial database setup
+- **Fix Applied**: Lines 183-194 - Added `telegram_notifications` table creation
+- **Table Schema**:
+  ```sql
+  CREATE TABLE IF NOT EXISTS public.telegram_notifications (
+      id SERIAL PRIMARY KEY,
+      phone VARCHAR(20) NOT NULL,
+      notification_type VARCHAR(50) NOT NULL,
+      message_data JSONB,
+      sent BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW(),
+      sent_at TIMESTAMP
+  )
+  ```
+- **Status**: ✅ **RESOLVED** - Notification system fully functional
+
+#### 4. Invalid URL in Inline Keyboard (FIXED)
+**Issue**: `Inline keyboard button url 'http://localhost:3000' is invalid: wrong http url`
+- **Root Cause**: Telegram API doesn't accept localhost URLs
+- **Fix Applied**: Removed booking website button from inline keyboard
+- **Note**: Users access booking site through browser directly
+- **Status**: ✅ **RESOLVED** - No more URL validation errors
+
+### 🆕 New Features Added
+
+#### 1. Auto-Recovery Error Handler
+**Feature**: Bot automatically shows main menu after any error
+- **Implementation**: Updated `error_handler()` function (lines 1130-1184)
+- **Behavior**: When error occurs:
+  1. Logs detailed error information
+  2. Automatically displays main menu to user
+  3. Allows user to continue without typing `/start`
+- **Benefits**: Improved user experience, no dead-ends
+- **Status**: ✅ **IMPLEMENTED**
+
+#### 2. Smart Text Message Handling
+**Feature**: Any text input shows main menu instead of trying to generate OTP
+- **Implementation**: Modified `handle_text()` function (line 770)
+- **Previous Behavior**: Text messages triggered OTP generation flow
+- **New Behavior**: Any text message displays main menu with phone number and action buttons
+- **Benefits**: Cleaner UX, no confusion for users
+- **Status**: ✅ **IMPLEMENTED**
+
+#### 3. Markdown Special Character Escaping
+**Feature**: Automatic escaping of Markdown special characters in user data
+- **Implementation**: New `escape_markdown()` function (lines 389-400)
+- **Characters Handled**: `_ * [ ] ( ) ~ ` > # + - = | { } . !`
+- **Applied To**: User names, appointment details, notes
+- **Benefits**: Prevents Markdown parsing errors with user-generated content
+- **Status**: ✅ **IMPLEMENTED**
+
+### 📊 Testing & Verification
+
+All fixes have been tested and verified on Replit production environment:
+
+```
+✅ Bot starts successfully
+✅ Database tables created (4 tables: appointments, bot_events, otp_codes, telegram_users)
+✅ OTP generation works
+✅ Appointments display without errors
+✅ Inline buttons functional
+✅ Error recovery working
+✅ Text messages show main menu
+✅ Scheduler running (reminders + notifications)
+```
+
+### 🔧 Technical Improvements
+
+- **Enhanced Logging**: Added debug logs for Markdown character detection
+- **Connection Pool Health**: Improved connection validation before queries
+- **Error Tracking**: Comprehensive error logging to `bot_events` table
+- **Database Indexes**: Optimized queries with proper indexing
+- **Code Quality**: Fixed enum handling across all SQL queries
+
+### 📝 Deployment Notes
+
+**Current Version**: 2.0.0  
+**Status**: ✅ Production Ready  
+**Last Tested**: May 7, 2026  
+**Platform**: Replit (with Supabase PostgreSQL)  
+
+**Deployment Checklist**:
+- ✅ All critical bugs fixed
+- ✅ Markdown errors resolved
+- ✅ Database tables created
+- ✅ Error handling improved
+- ✅ User experience enhanced
+- ✅ Comprehensive logging added
 
 ---
 

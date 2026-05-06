@@ -431,6 +431,42 @@
   color: var(--text-primary);
 }
 
+.admin-login .btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  margin-top: 12px;
+}
+
+.admin-login .btn-secondary:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.admin-login .otp-hint {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  text-align: center;
+}
+
+.admin-login .telegram-hint {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  margin-top: 8px;
+  text-align: center;
+}
+
+.admin-login .telegram-link {
+  color: var(--accent-info);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.admin-login .telegram-link:hover {
+  text-decoration: underline;
+}
+
 /* Old admin-header class removed - now using .admin-page header */
 
 

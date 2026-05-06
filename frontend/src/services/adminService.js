@@ -1,5 +1,11 @@
 import api from './api';
 
+// Get admin phone from backend
+export const getAdminPhone = async () => {
+  const response = await api.get('/admin/phone');
+  return response.data.phone;
+};
+
 // Admin Auth
 export const sendAdminOTP = async (phone) => {
   const response = await api.post('/admin/send-otp', { phone });

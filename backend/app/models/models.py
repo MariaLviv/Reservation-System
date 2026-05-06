@@ -91,3 +91,16 @@ class AuditLog(Base):
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(String(500), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class TelegramNotification(Base):
+    __tablename__ = "telegram_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    phone = Column(String(20), nullable=False, index=True)
+    notification_type = Column(String(50), nullable=False)  # 'cancellation', 'reminder', etc.
+    message_data = Column(JSON, nullable=False)  # Contains appointment details, etc.
+    sent = Column(Boolean, default=False, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+

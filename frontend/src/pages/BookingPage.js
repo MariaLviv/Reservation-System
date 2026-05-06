@@ -324,6 +324,17 @@ const BookingPage = ({ onUserVerified }) => {
                       maxLength="6"
                       className="otp-input"
                     />
+                    <p className="telegram-hint">
+                      💬 Або отримайте код через{' '}
+                      <a
+                        href="https://t.me/Toka_12_bot"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="telegram-link"
+                      >
+                        Telegram Bot @Toka_12_bot
+                      </a>
+                    </p>
                     <button
                       onClick={handleVerifyOTP}
                       disabled={otpLoading}

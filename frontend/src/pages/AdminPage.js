@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+  getAdminPhone,
+  sendAdminOTP,
+  verifyAdminOTP,
   getAllAppointments,
   updateAppointment,
   cancelAppointmentAdmin,
@@ -23,9 +26,11 @@ import { getAdminToken, saveAdminSession } from '../utils/storage';
 import '../styles/AdminPage.css';
 
 const AdminPage = ({ onLogout }) => {
-  const ADMIN_PHONE = '+380501234567'; // Hardcoded admin phone
+  const [adminPhone, setAdminPhone] = useState('');
   const [authenticated, setAuthenticated] = useState(() => !!getAdminToken());
   const [phone, setPhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Admin data
@@ -117,6 +122,21 @@ const AdminPage = ({ onLogout }) => {
     }
   }, [loadDashboardStats, loadAppointments, loadUsers]);
 
+  // Fetch admin phone from backend
+  useEffect(() => {
+    const fetchAdminPhone = async () => {
+      try {
+        const phone = await getAdminPhone();
+        setAdminPhone(phone);
+      } catch (error) {
+        console.error('Failed to fetch admin phone');
+      }
+    };
+    if (!authenticated) {
+      fetchAdminPhone();
+    }
+  }, [authenticated]);
+
   useEffect(() => {
     if (authenticated && activeTab === 'appointments') {
       setAppointmentsPage(1);
@@ -147,7 +167,7 @@ const AdminPage = ({ onLogout }) => {
     e.preventDefault();
 
     // Check if entered phone matches hardcoded admin phone
-    if (phone !== ADMIN_PHONE) {
+    if (phone !== adminPhone) {
       toast.error('Невірний номер адміністратора');
       return;
     }
@@ -155,21 +175,43 @@ const AdminPage = ({ onLogout }) => {
     setLoading(true);
 
     try {
-      // Direct login without OTP for admin
-      const token = 'admin-session-' + Date.now();
-
-      // Save to both localStorage and cookies
-      localStorage.setItem('adminToken', token);
-      saveAdminSession(ADMIN_PHONE, token);
-
-      setAuthenticated(true);
-      toast.success('Вхід виконано');
-
-      loadDashboardStats();
-      loadAppointments();
-      loadUsers();
+      await sendAdminOTP(adminPhone);
+      setOtpSent(true);
+      toast.success('Код підтвердження надіслано в Telegram');
     } catch (error) {
-      toast.error('Помилка входу');
+      toast.error('Помилка відправки коду');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+
+    if (!otpCode || otpCode.length !== 6) {
+      toast.error('Введіть 6-значний код');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const result = await verifyAdminOTP(adminPhone, otpCode);
+
+      if (result.session_token) {
+        saveAdminSession(adminPhone, result.session_token);
+
+        setAuthenticated(true);
+        toast.success('Вхід виконано');
+
+        loadDashboardStats();
+        loadAppointments();
+        loadUsers();
+      } else {
+        toast.error('Невірний код підтвердження');
+      }
+    } catch (error) {
+      toast.error('Помилка верифікації');
     } finally {
       setLoading(false);
     }
@@ -311,21 +353,60 @@ const AdminPage = ({ onLogout }) => {
           <h1>Адмін-панель</h1>
         </header>
         <div className="admin-login">
-          <form onSubmit={handleSendOTP}>
-            <div className="form-group">
-              <label>Номер телефону адміністратора</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value.replace(/\s/g, ''))}
-                placeholder="+380501234567"
-                required
-              />
-            </div>
-            <button type="submit" disabled={loading}>
-              {loading ? 'Вхід...' : 'Увійти'}
-            </button>
-          </form>
+          {!otpSent ? (
+            <form onSubmit={handleSendOTP}>
+              <div className="form-group">
+                <label>Номер телефону адміністратора</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\s/g, ''))}
+                  placeholder="+380501234567"
+                  required
+                />
+              </div>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Відправка...' : 'Отримати код'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyOTP}>
+              <div className="form-group">
+                <label>Введіть код з Telegram</label>
+                <input
+                  type="text"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  maxLength={6}
+                  required
+                  autoFocus
+                />
+                <p className="otp-hint">
+                  Код надіслано на номер {adminPhone}
+                </p>
+                <p className="telegram-hint">
+                  💬 Код приходить через{' '}
+                  <a href="https://t.me/Toka_12_bot" target="_blank" rel="noopener noreferrer" className="telegram-link">
+                    Telegram Bot @Toka_12_bot
+                  </a>
+                </p>
+              </div>
+              <button type="submit" disabled={loading}>
+                {loading ? 'Перевірка...' : 'Увійти'}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setOtpSent(false);
+                  setOtpCode('');
+                }}
+              >
+                ← Змінити номер
+              </button>
+            </form>
+          )}
         </div>
       </div>
     );

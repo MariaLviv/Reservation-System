@@ -29,12 +29,25 @@
   animation: shimmer 4s ease-in-out infinite;
 }
 
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-self: start;
+}
+
+.doctor-photo {
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .app-title {
   color: var(--text-primary);
   font-size: 1.05rem;
   margin: 0;
   flex-shrink: 0;
-  justify-self: start;
   font-weight: 800;
   font-family: 'Poppins', sans-serif;
   letter-spacing: -0.025em;

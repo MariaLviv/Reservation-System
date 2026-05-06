@@ -9,11 +9,6 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_PHONE: str
 
-    # Twilio
-    TWILIO_ACCOUNT_SID: str
-    TWILIO_AUTH_TOKEN: str
-    TWILIO_PHONE_NUMBER: str
-
     # Frontend
     FRONTEND_URL: str = "http://localhost:3000"
 

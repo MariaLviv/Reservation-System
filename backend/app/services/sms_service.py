@@ -1,39 +1,25 @@
-from twilio.rest import Client
-from app.core.config import settings
 import random
 import string
 
 
 class SMSService:
+    """SMS Service - Twilio removed, OTP handled via Telegram bot only"""
+
     def __init__(self):
-        self.client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        self.from_number = settings.TWILIO_PHONE_NUMBER
+        pass
 
     def send_otp(self, to_phone: str, code: str) -> bool:
-        """Send OTP code via SMS"""
-        try:
-            message = self.client.messages.create(
-                body=f"Ваш код підтвердження: {code}",
-                from_=self.from_number,
-                to=to_phone
-            )
-            return message.sid is not None
-        except Exception as e:
-            print(f"Failed to send SMS: {e}")
-            return False
+        """OTP is sent via Telegram bot, not SMS"""
+        # This method is kept for compatibility but does nothing
+        # OTP codes are retrieved from database by Telegram bot
+        print(f"SMS service disabled - OTP for {to_phone}: {code} (use Telegram bot)")
+        return True
 
     def send_reminder(self, to_phone: str, appointment_time: str) -> bool:
-        """Send appointment reminder via SMS"""
-        try:
-            message = self.client.messages.create(
-                body=f"Нагадування: у вас запис до лікаря завтра о {appointment_time}",
-                from_=self.from_number,
-                to=to_phone
-            )
-            return message.sid is not None
-        except Exception as e:
-            print(f"Failed to send reminder: {e}")
-            return False
+        """Appointment reminders via Telegram bot, not SMS"""
+        # This method is kept for compatibility
+        print(f"SMS service disabled - Reminder for {to_phone} at {appointment_time} (use Telegram bot)")
+        return True
 
     @staticmethod
     def generate_otp() -> str:

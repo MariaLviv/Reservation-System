@@ -96,6 +96,28 @@
   animation: pulse 2s ease-in-out infinite;
 }
 
+.telegram-hint {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+}
+
+.telegram-link {
+  color: var(--accent-info);
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.telegram-link:hover {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+
 .btn-primary-large {
   padding: 0.85rem 1.75rem;
   font-size: 1rem;
