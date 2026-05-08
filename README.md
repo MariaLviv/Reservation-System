@@ -871,7 +871,9 @@ These are hardcoded in `backend/app/core/database.py`:
 
 ---
 
-#### **telegram_users** - Bot User Registry (Bot-Managed)
+#### **telegram_users** - Bot User Registry
+**⚠️ Note**: Created and managed by **Telegram bot only** (not in backend models.py)
+
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | Integer | PRIMARY KEY, AUTO_INCREMENT | Unique bot user ID |
@@ -889,11 +891,14 @@ These are hardcoded in `backend/app/core/database.py`:
 **Purpose:**
 - Links Telegram accounts to phone numbers
 - Enables OTP code delivery via Telegram
-- Created/managed by Telegram bot
+- Created/managed by Telegram bot (`telegram_bot/bot.py`)
+- Backend reads this table to look up telegram_id by phone
 
 ---
 
-#### **telegram_notifications** - Notification Queue (Bot-Managed)
+#### **telegram_notifications** - Notification Queue
+**⚠️ Note**: Defined in backend models.py AND used by bot
+
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | Integer | PRIMARY KEY, AUTO_INCREMENT | Unique notification ID |
@@ -910,12 +915,14 @@ These are hardcoded in `backend/app/core/database.py`:
 
 **Purpose:**
 - Queue for appointment cancellation notifications
-- Bot polls this table and sends messages
+- **Backend** creates notification entries
+- **Bot** polls this table and sends messages
 - Tracks delivery status
 
 ---
 
-#### **bot_events** - Bot Activity Log (Bot-Managed)
+#### **bot_events** - Bot Activity Log
+**⚠️ Note**: Created and managed by **Telegram bot only** (not in backend models.py)
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | Integer | PRIMARY KEY, AUTO_INCREMENT | Unique event ID |
@@ -2407,7 +2414,7 @@ Response 200 OK:
 
 #### 8. Update User Profile
 ```http
-PUT /api/v1/user/profile
+POST /api/v1/user/profile
 Authorization: Bearer <user_session_token>
 Content-Type: application/json
 
@@ -2672,6 +2679,16 @@ rezervation/
 │   │   │   │                           # - GET /admin/export/excel
 │   │   │   │                           # - GET /admin/audit-logs
 │   │   │   │
+│   │   │   ├── auth.py                 # Legacy authentication endpoints
+│   │   │   │                           # - POST /auth/login (legacy)
+│   │   │   │                           # - POST /auth/logout (legacy)
+│   │   │   │                           # Note: Kept for backward compatibility
+│   │   │   │
+│   │   │   ├── telegram.py             # Telegram bot webhook integration
+│   │   │   │                           # - POST /telegram/webhook
+│   │   │   │                           # - Bot communication endpoints
+│   │   │   │                           # - Notification status updates
+│   │   │   │
 │   │   │   ├── user.py                 # Patient endpoints
 │   │   │   │                           # - POST /user/send-otp (request OTP)
 │   │   │   │                           # - POST /user/verify-otp (verify code)
@@ -2680,7 +2697,7 @@ rezervation/
 │   │   │   │                           # - GET /appointments (user's bookings)
 │   │   │   │                           # - DELETE /appointments/{id} (cancel)
 │   │   │   │                           # - GET /user/profile
-│   │   │   │                           # - PUT /user/profile
+│   │   │   │                           # - POST /user/profile (update)
 │   │   │   │
 │   │   │   ├── calendar.py             # Calendar integration endpoints
 │   │   │   │                           # - GET /calendar/feed/{token}.ics
@@ -2708,6 +2725,11 @@ rezervation/
 │   │   │   │                           # - TTL management (1-minute default)
 │   │   │   │                           # - Cache invalidation functions
 │   │   │   │
+│   │   │   ├── csrf.py                 # CSRF protection middleware
+│   │   │   │                           # - CSRF token generation
+│   │   │   │                           # - Request validation
+│   │   │   │                           # - Protection for state-changing operations
+│   │   │   │
 │   │   │   ├── monitoring.py           # Observability & monitoring
 │   │   │   │                           # - Sentry error tracking
 │   │   │   │                           # - Prometheus metrics
@@ -2727,8 +2749,9 @@ rezervation/
 │   │   │   │                           # - DayOff (blocked dates)
 │   │   │   │                           # - BlockedSlot (blocked time slots)
 │   │   │   │                           # - AuditLog (admin action tracking)
-│   │   │   │                           # - TelegramUser (bot users)
-│   │   │   │                           # - TelegramNotification (bot messages)
+│   │   │   │                           # - TelegramNotification (notification queue)
+│   │   │   │                           # Note: TelegramUser model NOT in backend
+│   │   │   │                           #       (managed by bot independently)
 │   │   │   │
 │   │   │   └── schemas.py              # Pydantic Validation Schemas
 │   │   │                               # - AdminLoginRequest (username/password)
@@ -2817,21 +2840,30 @@ rezervation/
 │   ├── src/
 │   │   ├── components/                 # Reusable React Components
 │   │   │   ├── AdminScheduleView.js    # Admin calendar with slot blocking
+│   │   │   ├── Animations.js           # Animation utilities & components
 │   │   │   ├── BookingForm.js          # Patient booking form
+│   │   │   ├── BookingForm.test.js     # Booking form unit tests
 │   │   │   ├── BookingGuide.js         # Booking instructions
 │   │   │   ├── CalendarFeed.js         # iCal feed subscription
 │   │   │   ├── CalendarIntegration.js  # Calendar app integration
+│   │   │   ├── CalendarIntegration.test.js # Calendar integration tests
 │   │   │   ├── ConfirmDialog.js        # Confirmation modal
 │   │   │   ├── Dashboard.js            # Admin dashboard widgets
 │   │   │   ├── EmptyState.js           # Empty state placeholder
 │   │   │   ├── ErrorBoundary.js        # Error handling boundary
 │   │   │   ├── FilterBar.js            # Data filtering component
 │   │   │   ├── Loading.js              # Loading spinner
+│   │   │   ├── LoadingSpinner.js       # Alternative loading spinner
 │   │   │   ├── OTPModal.js             # OTP input modal
+│   │   │   ├── OTPModal.test.js        # OTP modal unit tests
+│   │   │   ├── OpeningHours.js         # Working hours display
 │   │   │   ├── Pagination.js           # Data pagination
+│   │   │   ├── ReservationSummary.js   # Booking summary display
 │   │   │   ├── SearchBar.js            # Search input
 │   │   │   ├── SkeletonLoader.js       # Skeleton loading
-│   │   │   └── SlotPicker.js           # Time slot calendar picker
+│   │   │   ├── SlotPicker.js           # Time slot calendar picker
+│   │   │   ├── SlotPicker.test.js      # Slot picker unit tests
+│   │   │   └── Toast.js                # Toast notifications
 │   │   │
 │   │   ├── pages/                      # Main Application Pages
 │   │   │   ├── AdminPage.js            # Complete admin panel
@@ -2892,7 +2924,8 @@ rezervation/
 │   │   ├── utils/                      # Utility Functions
 │   │   │   ├── apiClient.js            # Axios HTTP client wrapper
 │   │   │   ├── logger.js               # Frontend logging
-│   │   │   └── storage.js              # LocalStorage & session management
+│   │   │   ├── storage.js              # LocalStorage & session management
+│   │   │   └── storage.test.js         # Storage utility tests
 │   │   │
 │   │   ├── App.js                      # Root component with React Router
 │   │   │                               # - Route definitions
