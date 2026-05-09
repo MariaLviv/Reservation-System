@@ -47,13 +47,10 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Update userVerified when it changes
+  // Fetch user name when userVerified changes
   useEffect(() => {
     const phone = getUserPhone();
-    setUserVerified(!!phone);
-
-    // Fetch user profile to get name
-    if (phone) {
+    if (userVerified && phone) {
       getUserProfile(phone)
         .then(profile => {
           setUserName(profile.name || '');
@@ -64,7 +61,7 @@ function App() {
     } else {
       setUserName('');
     }
-  }, []);
+  }, [userVerified]);
 
   const handleUserLogout = () => {
     setUserVerified(false);
