@@ -24,7 +24,7 @@ import { SkeletonTable } from '../components/Loading';
 import { getAdminToken, saveAdminSession } from '../utils/storage';
 import '../styles/AdminPage.css';
 
-const AdminPage = ({ onLogout }) => {
+const AdminPage = ({ onLogout, onLogin }) => {
   const getDefaultReportDates = () => ({
     from: format(new Date(), 'yyyy-MM-dd'),
     to: format(addDays(new Date(), 1), 'yyyy-MM-dd')
@@ -168,6 +168,7 @@ const AdminPage = ({ onLogout }) => {
       if (result.session_token) {
         saveAdminSession(username, result.session_token);
         setAuthenticated(true);
+        if (onLogin) onLogin();
         toast.success('Вхід виконано');
 
         loadDashboardStats();

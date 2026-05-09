@@ -59,7 +59,7 @@ class OTPService:
             )
             db.add(otp)
             db.commit()
-            return {"success": True, "code": "1111"}
+            return {"success": True, "code": "111111"}
 
         # Check rate limit before generating OTP
         is_allowed, count = self.check_rate_limit(db, phone)
@@ -142,7 +142,7 @@ class OTPService:
             if not otp:
                 otp = OTPCode(
                     phone=phone,
-                    code="1111",
+                    code="111111",
                     expires_at=datetime.utcnow() + timedelta(hours=24),
                     verified=True,
                     attempts=0,

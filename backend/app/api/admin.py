@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.utils.report_generator import ReportGenerator
 from jose import jwt
 from datetime import datetime, timedelta
-from passlib.hash import bcrypt as passlib_bcrypt
+import bcrypt
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -55,9 +55,12 @@ def admin_login(request: AdminLoginRequest, req: Request, db: Session = Depends(
 
     # Verify password
     try:
-        if not passlib_bcrypt.verify(request.password, settings.ADMIN_PASSWORD_HASH):
+        password_bytes = request.password.encode('utf-8')
+        hash_bytes = settings.ADMIN_PASSWORD_HASH.encode('utf-8')
+        if not bcrypt.checkpw(password_bytes, hash_bytes):
             raise HTTPException(status_code=401, detail="Невірний логін або пароль")
-    except Exception:
+    except Exception as e:
+        print(f"Password verification error: {e}")
         raise HTTPException(status_code=401, detail="Невірний логін або пароль")
 
     # Create session token

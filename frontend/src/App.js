@@ -6,6 +6,7 @@ import BookingPage from './pages/BookingPage';
 import AdminPage from './pages/AdminPage';
 import NotFound from './pages/NotFound';
 import { getAdminToken, getUserPhone, clearUserSession, clearAdminSession } from './utils/storage';
+import { getUserProfile } from './services/userService';
 import './styles/App.css';
 
 function App() {
@@ -17,6 +18,8 @@ function App() {
   });
 
   const [userVerified, setUserVerified] = useState(() => !!getUserPhone());
+  const [userName, setUserName] = useState('');
+  const [adminLoggedIn, setAdminLoggedIn] = useState(() => !!getAdminToken());
 
   // Update URL when page changes
   useEffect(() => {
@@ -48,16 +51,31 @@ function App() {
   useEffect(() => {
     const phone = getUserPhone();
     setUserVerified(!!phone);
+
+    // Fetch user profile to get name
+    if (phone) {
+      getUserProfile(phone)
+        .then(profile => {
+          setUserName(profile.name || '');
+        })
+        .catch(err => {
+          console.error('Error fetching user profile:', err);
+        });
+    } else {
+      setUserName('');
+    }
   }, []);
 
   const handleUserLogout = () => {
     setUserVerified(false);
+    setUserName('');
     clearUserSession();
     window.location.reload();
   };
 
   const handleAdminLogout = () => {
     clearAdminSession();
+    setAdminLoggedIn(false);
     setCurrentPage('booking');
     toast.info('Ви вийшли з адмін-панелі');
   };
@@ -65,7 +83,7 @@ function App() {
   const renderContent = () => {
     switch (currentPage) {
       case 'admin':
-        return <AdminPage onLogout={handleAdminLogout} />;
+        return <AdminPage onLogout={handleAdminLogout} onLogin={() => setAdminLoggedIn(true)} />;
       case 'notfound':
         return <NotFound onNavigate={setCurrentPage} />;
       case 'booking':
@@ -99,13 +117,19 @@ function App() {
             </button>
           </div>
 
+          {currentPage === 'booking' && userVerified && userName && (
+            <div className="user-name-center">
+              <span className="user-name-display">👤 {userName}</span>
+            </div>
+          )}
+
           <div className="nav-controls">
             {currentPage === 'booking' && userVerified && (
               <button onClick={handleUserLogout} className="logout-nav-button">
                 🚪 Вийти
               </button>
             )}
-            {currentPage === 'admin' && getAdminToken() && (
+            {currentPage === 'admin' && adminLoggedIn && (
               <button onClick={handleAdminLogout} className="logout-nav-button">
                 🚪 Вийти
               </button>
