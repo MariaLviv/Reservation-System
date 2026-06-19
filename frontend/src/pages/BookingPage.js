@@ -51,6 +51,7 @@ const BookingPage = ({ onUserVerified }) => {
     setAppointmentsLoading(true);
     try {
       const data = await getUserAppointments(phone);
+      console.log('📅 Appointments loaded:', data?.length, data);
       setUserAppointments(data || []);
     } catch (error) {
       console.error('Error fetching appointments:', error);
@@ -446,7 +447,14 @@ const BookingPage = ({ onUserVerified }) => {
                         );
                         const laterApts = userAppointments.filter(apt => {
                           const aptDate = new Date(apt.start_time);
-                          return aptDate > tomorrow && !isSameDay(aptDate, tomorrow);
+                          return !isSameDay(aptDate, today) && !isSameDay(aptDate, tomorrow);
+                        });
+
+                        console.log('📊 Appointments breakdown:', {
+                          total: userAppointments.length,
+                          today: todayApts.length,
+                          tomorrow: tomorrowApts.length,
+                          later: laterApts.length
                         });
 
                         return (
