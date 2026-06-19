@@ -105,3 +105,9 @@ export const createOrUpdateProfile = async (phone, name, birthdate) => {
   });
   return response.data;
 };
+
+// Days Off Service
+export const getDaysOff = async () => {
+  const response = await api.get('/days-off');
+  return response.data;
+};

@@ -3,6 +3,19 @@ import Calendar from 'react-calendar';
 import { format, startOfWeek, addDays, isSameDay } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { toast } from 'react-toastify';
+import {
+  getScheduleConfig,
+  updateSchedule,
+  getSlots,
+  getBlockedSlots,
+  deleteBlockedSlot,
+  blockSlot as blockSlotApi,
+  getAdminDaysOff,
+  addDayOff,
+  removeDayOff,
+  getAllAppointments,
+  createAppointmentAdmin
+} from '../services/adminService';
 import 'react-calendar/dist/Calendar.css';
 import '../styles/AdminScheduleView.css';
 
@@ -29,20 +42,13 @@ const AdminScheduleView = () => {
 
   const loadScheduleConfig = async () => {
     try {
-      const response = await fetch('/api/v1/admin/schedule', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
+      const data = await getScheduleConfig();
+      setScheduleConfig(data);
+      setHoursForm({
+        start_time: data.start_time,
+        end_time: data.end_time,
+        slot_duration: data.slot_duration
       });
-      if (response.ok) {
-        const data = await response.json();
-        setScheduleConfig(data);
-        setHoursForm({
-          start_time: data.start_time,
-          end_time: data.end_time,
-          slot_duration: data.slot_duration
-        });
-      }
     } catch (error) {
       console.error('Error loading schedule config:', error);
     }
@@ -55,16 +61,13 @@ const AdminScheduleView = () => {
     while (checkDate <= maxCheckDate) {
       try {
         const dateStr = format(checkDate, 'yyyy-MM-dd');
-        const response = await fetch(`/api/v1/slots?from_date=${dateStr}&to_date=${dateStr}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.length > 0) {
-            setSelectedDate(checkDate);
-            // Store the slots we just fetched to avoid refetching
-            setSlots(data);
-            setLoading(false);
-            return;
-          }
+        const data = await getSlots(dateStr, dateStr);
+        if (data && data.length > 0) {
+          setSelectedDate(checkDate);
+          // Store the slots we just fetched to avoid refetching
+          setSlots(data);
+          setLoading(false);
+          return;
         }
       } catch (error) {
         console.error('Error checking date:', error);
@@ -80,13 +83,7 @@ const AdminScheduleView = () => {
     setLoading(true);
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
-      const response = await fetch(`/api/v1/slots?from_date=${dateStr}&to_date=${dateStr}`);
-      if (!response.ok) {
-        console.error('Failed to load slots:', response.status);
-        setSlots([]);
-        return;
-      }
-      const data = await response.json();
+      const data = await getSlots(dateStr, dateStr);
       setSlots(data);
     } catch (error) {
       console.error('Error loading slots:', error);
@@ -98,17 +95,7 @@ const AdminScheduleView = () => {
 
   const loadBlockedSlots = useCallback(async () => {
     try {
-      const response = await fetch('/api/v1/admin/blocked-slots', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
-      });
-      if (!response.ok) {
-        console.error('Failed to load blocked slots:', response.status);
-        setBlockedSlots([]);
-        return;
-      }
-      const data = await response.json();
+      const data = await getBlockedSlots();
       setBlockedSlots(data);
     } catch (error) {
       console.error('Error loading blocked slots:', error);
@@ -120,17 +107,7 @@ const AdminScheduleView = () => {
     setBookedAppointments([]);
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
-      const response = await fetch(`/api/v1/admin/appointments?from_date=${dateStr}&to_date=${dateStr}&status=booked&limit=100`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
-      });
-      if (!response.ok) {
-        console.error('Failed to load booked appointments:', response.status);
-        setBookedAppointments([]);
-        return;
-      }
-      const data = await response.json();
+      const data = await getAllAppointments(dateStr, dateStr, 'booked', null, 0, 100);
       setBookedAppointments(data.items || []);
     } catch (error) {
       console.error('Error loading booked appointments:', error);
@@ -140,17 +117,7 @@ const AdminScheduleView = () => {
 
   const loadDaysOff = useCallback(async () => {
     try {
-      const response = await fetch('/api/v1/admin/days-off', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
-      });
-      if (!response.ok) {
-        console.error('Failed to load days off:', response.status);
-        setDaysOff([]);
-        return;
-      }
-      const data = await response.json();
+      const data = await getAdminDaysOff();
       setDaysOff(data);
     } catch (error) {
       console.error('Error loading days off:', error);
@@ -179,30 +146,16 @@ const AdminScheduleView = () => {
 
   const blockSlot = async (slot) => {
     try {
-      const response = await fetch('/api/v1/admin/block-slot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        },
-        body: JSON.stringify({
-          start_time: slot.start_time,
-          end_time: slot.end_time
-        })
+      await blockSlotApi({
+        start_time: slot.start_time,
+        end_time: slot.end_time
       });
-
-      if (response.ok) {
-        toast.success('Слот заблоковано');
-        loadBlockedSlots();
-        loadSlots();
-      } else {
-        const error = await response.text();
-        console.error('Failed to block slot:', response.status, error);
-        toast.error(`Помилка блокування: ${response.status}`);
-      }
+      toast.success('Слот заблоковано');
+      loadBlockedSlots();
+      loadSlots();
     } catch (error) {
       console.error('Error blocking slot:', error);
-      toast.error('Помилка з\'єднання');
+      toast.error('Помилка блокування');
     }
   };
 
@@ -229,32 +182,19 @@ const AdminScheduleView = () => {
 
     setBookingSubmitting(true);
     try {
-      const response = await fetch('/api/v1/admin/appointments/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        },
-        body: JSON.stringify({
-          name: bookingForm.name.trim(),
-          phone: bookingForm.phone.trim(),
-          start_time: bookingSlot.start_time
-        })
+      await createAppointmentAdmin({
+        name: bookingForm.name.trim(),
+        phone: bookingForm.phone.trim(),
+        start_time: bookingSlot.start_time
       });
-
-      if (response.ok) {
-        toast.success('Запис створено');
-        closeBookingForm(true);
-        loadSlots();
-        loadBookedAppointments();
-      } else {
-        const errorData = await response.json().catch(() => null);
-        const message = errorData?.detail || `Помилка створення: ${response.status}`;
-        toast.error(message);
-      }
+      toast.success('Запис створено');
+      closeBookingForm(true);
+      loadSlots();
+      loadBookedAppointments();
     } catch (error) {
       console.error('Error creating appointment:', error);
-      toast.error('Помилка з\'єднання');
+      const message = error.response?.data?.detail || 'Помилка створення';
+      toast.error(message);
     } finally {
       setBookingSubmitting(false);
     }
@@ -262,45 +202,21 @@ const AdminScheduleView = () => {
 
   const unblockSlot = async (slotId) => {
     try {
-      const response = await fetch(`/api/v1/admin/blocked-slots/${slotId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
-      });
-
-      if (response.ok) {
-        toast.success('Слот розблоковано');
-        loadBlockedSlots();
-        loadSlots();
-      } else {
-        const error = await response.text();
-        console.error('Failed to unblock slot:', response.status, error);
-        toast.error(`Помилка розблокування: ${response.status}`);
-      }
+      await deleteBlockedSlot(slotId);
+      toast.success('Слот розблоковано');
+      loadBlockedSlots();
+      loadSlots();
     } catch (error) {
       console.error('Error unblocking slot:', error);
-      toast.error('Помилка з\'єднання');
+      toast.error('Помилка розблокування');
     }
   };
 
   const blockDay = async (date) => {
     try {
-      const response = await fetch('/api/v1/admin/days-off', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        },
-        body: JSON.stringify({
-          date: format(date, 'yyyy-MM-dd')
-        })
-      });
-
-      if (response.ok) {
-        loadDaysOff();
-        loadSlots();
-      }
+      await addDayOff(format(date, 'yyyy-MM-dd'));
+      loadDaysOff();
+      loadSlots();
     } catch (error) {
       console.error('Error blocking day:', error);
     }
@@ -311,17 +227,9 @@ const AdminScheduleView = () => {
     if (!dayOff) return;
 
     try {
-      const response = await fetch(`/api/v1/admin/days-off/${dayOff.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        }
-      });
-
-      if (response.ok) {
-        loadDaysOff();
-        loadSlots();
-      }
+      await removeDayOff(dayOff.id);
+      loadDaysOff();
+      loadSlots();
     } catch (error) {
       console.error('Error unblocking day:', error);
     }
@@ -356,13 +264,7 @@ const AdminScheduleView = () => {
         const promises = blockedDates.map(date => {
           const dayOff = daysOff.find(d => isSameDay(new Date(d.date), date));
           if (!dayOff) return Promise.resolve();
-
-          return fetch(`/api/v1/admin/days-off/${dayOff.id}`, {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-            }
-          });
+          return removeDayOff(dayOff.id);
         });
 
         await Promise.all(promises);
@@ -370,16 +272,7 @@ const AdminScheduleView = () => {
       } else {
         // Block all matching days
         const promises = datesToCheck.map(date =>
-          fetch('/api/v1/admin/days-off', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-            },
-            body: JSON.stringify({
-              date: format(date, 'yyyy-MM-dd')
-            })
-          })
+          addDayOff(format(date, 'yyyy-MM-dd'))
         );
 
         await Promise.all(promises);
@@ -447,15 +340,7 @@ const AdminScheduleView = () => {
           }
         }
 
-        const promises = weekDaysOff.map(dayOff =>
-          fetch(`/api/v1/admin/days-off/${dayOff.id}`, {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-            }
-          })
-        );
-
+        const promises = weekDaysOff.map(dayOff => removeDayOff(dayOff.id));
         await Promise.all(promises);
         toast.success('Тиждень розблоковано');
       } else {
@@ -463,18 +348,7 @@ const AdminScheduleView = () => {
         const promises = [];
         for (let i = 0; i < 7; i++) {
           const date = addDays(weekStart, i);
-          promises.push(
-            fetch('/api/v1/admin/days-off', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-              },
-              body: JSON.stringify({
-                date: format(date, 'yyyy-MM-dd')
-              })
-            })
-          );
+          promises.push(addDayOff(format(date, 'yyyy-MM-dd')));
         }
 
         await Promise.all(promises);
@@ -492,28 +366,14 @@ const AdminScheduleView = () => {
   const handleUpdateHours = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/v1/admin/schedule', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
-        },
-        body: JSON.stringify(hoursForm)
-      });
-
-      if (response.ok) {
-        toast.success('Робочі години оновлено');
-        setEditingHours(false);
-        loadScheduleConfig();
-        loadSlots();
-      } else {
-        const error = await response.text();
-        console.error('Failed to update hours:', response.status, error);
-        toast.error(`Помилка оновлення: ${response.status}`);
-      }
+      await updateSchedule(hoursForm);
+      toast.success('Робочі години оновлено');
+      setEditingHours(false);
+      loadScheduleConfig();
+      loadSlots();
     } catch (error) {
       console.error('Error updating hours:', error);
-      toast.error('Помилка з\'єднання');
+      toast.error('Помилка оновлення');
     }
   };
 

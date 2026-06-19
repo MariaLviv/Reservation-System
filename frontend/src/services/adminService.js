@@ -142,3 +142,44 @@ export const exportExcel = async (fromDate, toDate) => {
   });
   return response.data;
 };
+
+// Schedule Config
+export const getScheduleConfig = async () => {
+  const response = await api.get('/admin/schedule');
+  return response.data;
+};
+
+// Get available slots (public endpoint)
+export const getSlots = async (fromDate, toDate) => {
+  const response = await api.get('/slots', {
+    params: {
+      from_date: fromDate,
+      to_date: toDate,
+    },
+  });
+  return response.data;
+};
+
+// Get blocked slots
+export const getBlockedSlots = async () => {
+  const response = await api.get('/admin/blocked-slots');
+  return response.data;
+};
+
+// Delete blocked slot
+export const deleteBlockedSlot = async (slotId) => {
+  const response = await api.delete(`/admin/blocked-slots/${slotId}`);
+  return response.data;
+};
+
+// Get days off (admin version)
+export const getAdminDaysOff = async () => {
+  const response = await api.get('/admin/days-off');
+  return response.data;
+};
+
+// Create appointment (admin)
+export const createAppointmentAdmin = async (data) => {
+  const response = await api.post('/admin/appointments/create', data);
+  return response.data;
+};

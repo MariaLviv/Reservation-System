@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { uk } from 'date-fns/locale';
 import { toast } from 'react-toastify';
-import { getAvailableSlots, createAppointment, getUserAppointments, cancelAppointment, deleteAppointment, sendOTP, verifyOTP, getUserProfile, createOrUpdateProfile, clearSlotsCache } from '../services/userService';
+import { getAvailableSlots, createAppointment, getUserAppointments, cancelAppointment, deleteAppointment, sendOTP, verifyOTP, getUserProfile, createOrUpdateProfile, clearSlotsCache, getDaysOff } from '../services/userService';
 import { getUserPhone, saveUserSession } from '../utils/storage';
 import { addMonths, isBefore, isWeekend, startOfDay, addDays, isSameDay } from 'date-fns';
 import Calendar from 'react-calendar';
@@ -37,12 +37,9 @@ const BookingPage = ({ onUserVerified }) => {
 
   const loadDaysOff = useCallback(async () => {
     try {
-      const response = await fetch('/api/v1/days-off');
-      if (response.ok) {
-        const data = await response.json();
-        const dates = data.map(d => parseISO(d.date));
-        setDaysOff(dates);
-      }
+      const data = await getDaysOff();
+      const dates = data.map(d => parseISO(d.date));
+      setDaysOff(dates);
     } catch (error) {
       console.error('Error fetching days off:', error);
     }

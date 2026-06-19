@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Calendar from 'react-calendar';
 import { format, addMonths, isBefore, startOfDay, addDays, isSameDay, parseISO } from 'date-fns';
 import { uk } from 'date-fns/locale';
-import { getAvailableSlots } from '../services/userService';
+import { getAvailableSlots, getDaysOff } from '../services/userService';
 import { toast } from 'react-toastify';
 import { Spinner } from './Loading';
 import 'react-calendar/dist/Calendar.css';
@@ -18,20 +18,15 @@ const SlotPicker = ({ onSlotSelect }) => {
 
   const fetchDaysOff = async () => {
     try {
-      const response = await fetch('/api/v1/days-off');
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Days off API response:', data);
-        const dates = data.map(d => {
-          const parsed = parseISO(d.date);
-          console.log('Parsed date:', parsed, 'Original:', d.date);
-          return parsed;
-        });
-        console.log('Days off loaded:', dates);
-        setDaysOff(dates);
-      } else {
-        console.error('Failed to fetch days off:', response.status);
-      }
+      const data = await getDaysOff();
+      console.log('Days off API response:', data);
+      const dates = data.map(d => {
+        const parsed = parseISO(d.date);
+        console.log('Parsed date:', parsed, 'Original:', d.date);
+        return parsed;
+      });
+      console.log('Days off loaded:', dates);
+      setDaysOff(dates);
     } catch (error) {
       console.error('Error fetching days off:', error);
     }
