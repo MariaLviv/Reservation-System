@@ -81,13 +81,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Constants
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '6213735016:AAGVhHj-oV2mfJfGgddACFRTFg-IoDFuq10')
-# IMPORTANT: Use Supabase database to match backend - IGNORE environment variable
-DATABASE_URL = 'postgresql://postgres.wgexfdydnmspnpssvdsq:reservationDBword_12@aws-0-eu-west-1.pooler.supabase.com:6543/postgres'
 
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+DATABASE_URL = os.getenv('DATABASE_URL')
 # Verify we're using the correct database
-print(f"🔍 Database URL: {DATABASE_URL[:50]}...")
+#print(f"🔍 Database URL: {DATABASE_URL[:50]}...")
 if 'supabase.com' in DATABASE_URL:
     print("✅ Using Supabase database (matches backend)")
 elif 'heliumdb' in DATABASE_URL:
