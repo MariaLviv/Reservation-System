@@ -345,12 +345,12 @@ const BookingPage = ({ onUserVerified }) => {
                     <p className="telegram-hint">
                       💬 Або отримайте код через{' '}
                       <a
-                        href="https://t.me/Toka_12_bot"
+                        href="https://t.me/hnidan_bot"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="telegram-link"
                       >
-                        Telegram Bot @Toka_12_bot
+                        Telegram Bot @hnidan_bot
                       </a>
                     </p>
                     <button
