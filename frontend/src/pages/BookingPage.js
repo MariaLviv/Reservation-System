@@ -29,9 +29,11 @@ const BookingPage = ({ onUserVerified }) => {
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsLoaded, setSlotsLoaded] = useState(false); // Track if slots were loaded for current date
   const [daysOff, setDaysOff] = useState([]);
   const [userAppointments, setUserAppointments] = useState([]);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false); // Prevent multiple initial loads
 
   const maxDate = addMonths(new Date(), 6);
 
@@ -58,17 +60,20 @@ const BookingPage = ({ onUserVerified }) => {
   }, [phone]);
 
   const loadSlots = useCallback(async () => {
+    if (!selectedDate || slotsLoading) return;
     setSlotsLoading(true);
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       const data = await getAvailableSlots(dateStr, dateStr);
       setSlots(data);
+      setSlotsLoaded(true);
     } catch (error) {
       toast.error('Помилка завантаження слотів');
+      setSlotsLoaded(true); // Mark as loaded even on error to prevent infinite retries
     } finally {
       setSlotsLoading(false);
     }
-  }, [selectedDate]);
+  }, [selectedDate, slotsLoading]);
 
   const isDayOff = useCallback((date) => {
     return daysOff.some(dayOff => isSameDay(startOfDay(dayOff), startOfDay(date)));
@@ -79,7 +84,8 @@ const BookingPage = ({ onUserVerified }) => {
     const maxCheckDate = addDays(new Date(), 30);
 
     while (isBefore(checkDate, maxCheckDate)) {
-      if (!isWeekend(checkDate) && !isDayOff(checkDate)) {
+      // Skip weekends - don't need daysOff check here for initial load
+      if (!isWeekend(checkDate)) {
         try {
           const dateStr = format(checkDate, 'yyyy-MM-dd');
           const data = await getAvailableSlots(dateStr, dateStr);
@@ -87,6 +93,7 @@ const BookingPage = ({ onUserVerified }) => {
             setSelectedDate(checkDate);
             // Store the slots we just fetched to avoid refetching
             setSlots(data);
+            setSlotsLoaded(true);
             setSlotsLoading(false);
             return;
           }
@@ -97,23 +104,25 @@ const BookingPage = ({ onUserVerified }) => {
       checkDate = addDays(checkDate, 1);
     }
     setSelectedDate(new Date());
-  }, [isDayOff]);
+    setSlotsLoaded(true);
+  }, []); // No dependencies - runs once
 
-  // Auto-find first available date and load days-off
+  // Auto-find first available date and load days-off (runs once when verified)
   useEffect(() => {
-    if (verified && !selectedDate) {
+    if (verified && !initialLoadDone) {
+      setInitialLoadDone(true);
       loadDaysOff();
       loadUserAppointments();
       findFirstAvailableDate();
     }
-  }, [verified, selectedDate, loadDaysOff, loadUserAppointments, findFirstAvailableDate]);
+  }, [verified, initialLoadDone, loadDaysOff, loadUserAppointments, findFirstAvailableDate]);
 
-  // Load slots when date changes (but skip if we already have slots from findFirstAvailableDate)
+  // Load slots when date changes manually (not from findFirstAvailableDate)
   useEffect(() => {
-    if (selectedDate && slots.length === 0 && !slotsLoading) {
+    if (selectedDate && !slotsLoaded && !slotsLoading) {
       loadSlots();
     }
-  }, [selectedDate, slots.length, slotsLoading, loadSlots]);
+  }, [selectedDate, slotsLoaded, slotsLoading, loadSlots]);
 
   const handleCancelAppointment = async (appointmentId) => {
     if (!window.confirm('Скасувати цей запис?')) return;
@@ -131,7 +140,7 @@ const BookingPage = ({ onUserVerified }) => {
       // Reload slots to show the freed time
       if (selectedDate) {
         setSlots([]); // Clear current slots
-        loadSlots();
+        setSlotsLoaded(false); // Trigger reload
       }
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Помилка скасування');
@@ -275,10 +284,11 @@ const BookingPage = ({ onUserVerified }) => {
       setSelectedDate(null);
       setSelectedSlot(null);
       setSlots([]); // Clear slots
+      setSlotsLoaded(false);
+      setInitialLoadDone(false); // Allow re-finding first available date
 
-      // Reload appointments and find next available date
+      // Reload appointments
       loadUserAppointments();
-      setTimeout(() => findFirstAvailableDate(), 500);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Помилка створення запису');
       setSelectedSlot(null);
@@ -583,6 +593,7 @@ const BookingPage = ({ onUserVerified }) => {
                     onChange={(date) => {
                       setSelectedDate(date);
                       setSlots([]); // Clear slots to trigger fresh load for manually selected date
+                      setSlotsLoaded(false); // Reset loaded flag
                       setStep(2);
                     }}
                     value={selectedDate}

@@ -23,6 +23,7 @@ const AdminScheduleView = () => {
   const [selectedDate, setSelectedDate] = useState(null);
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [slotsLoaded, setSlotsLoaded] = useState(false); // Track if slots were loaded
   const [bookedAppointments, setBookedAppointments] = useState([]);
   const [blockedSlots, setBlockedSlots] = useState([]);
   const [daysOff, setDaysOff] = useState([]);
@@ -66,6 +67,7 @@ const AdminScheduleView = () => {
           setSelectedDate(checkDate);
           // Store the slots we just fetched to avoid refetching
           setSlots(data);
+          setSlotsLoaded(true);
           setLoading(false);
           return;
         }
@@ -77,21 +79,25 @@ const AdminScheduleView = () => {
 
     // If no slots found in 30 days, just select today
     setSelectedDate(new Date());
+    setSlotsLoaded(true);
   };
 
   const loadSlots = useCallback(async () => {
+    if (loading) return;
     setLoading(true);
     try {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       const data = await getSlots(dateStr, dateStr);
       setSlots(data);
+      setSlotsLoaded(true);
     } catch (error) {
       console.error('Error loading slots:', error);
       setSlots([]);
+      setSlotsLoaded(true);
     } finally {
       setLoading(false);
     }
-  }, [selectedDate]);
+  }, [selectedDate, loading]);
 
   const loadBlockedSlots = useCallback(async () => {
     try {
@@ -135,14 +141,14 @@ const AdminScheduleView = () => {
   // Reload data when selected date changes (skip slots if we already have them from findFirstAvailableDate)
   useEffect(() => {
     if (selectedDate) {
-      if (slots.length === 0 && !loading) {
+      if (!slotsLoaded && !loading) {
         loadSlots();
       }
       loadBlockedSlots();
       loadBookedAppointments();
       loadDaysOff();
     }
-  }, [selectedDate, slots.length, loading, loadSlots, loadBlockedSlots, loadBookedAppointments, loadDaysOff]);
+  }, [selectedDate, slotsLoaded, loading, loadSlots, loadBlockedSlots, loadBookedAppointments, loadDaysOff]);
 
   const blockSlot = async (slot) => {
     try {
@@ -549,6 +555,7 @@ const AdminScheduleView = () => {
               onChange={(date) => {
                 setSelectedDate(date);
                 setSlots([]); // Clear slots to trigger fresh load for manually selected date
+                setSlotsLoaded(false); // Reset loaded flag
               }}
               value={selectedDate}
               locale="uk-UA"
