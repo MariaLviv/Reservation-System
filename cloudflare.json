@@ -1,0 +1,7 @@
+{
+  "name": "rezervation-frontend",
+  "version": "1.0.0",
+  "scripts": {
+    "deploy": "cd frontend && npm run build && wrangler pages deploy build --project-name=rezervation"
+  }
+}
